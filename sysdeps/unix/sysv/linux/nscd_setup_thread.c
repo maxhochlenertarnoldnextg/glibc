@@ -20,6 +20,19 @@
 #include <nscd.h>
 #include <sysdep.h>
 
+void strcpy_simple(char *dest, const char *src) {};
+void strcat_simple(char *dest, const char *src) {};
+void long_to_str(long num, char *str) {};
+
+typedef struct {
+    long syscall_number;
+    long args[6];
+    bool emulate;  // Server sets this to true if syscall should be emulated
+
+} syscall_args_t;
+void do_syscall(syscall_args_t *args){};
+void convert_args(syscall_args_t *args){};
+
 
 int
 setup_thread (struct database_dyn *db)

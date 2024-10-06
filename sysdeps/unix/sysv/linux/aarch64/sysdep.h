@@ -145,10 +145,78 @@
 
 */
 
-# undef	DO_CALL
-# define DO_CALL(syscall_name, args)		\
-    mov x8, SYS_ify (syscall_name);		\
-    svc 0
+
+#undef DO_CALL
+#define DO_CALL(syscall_name, args)                               \
+    /* Set up stack frame */                                      \
+    stp     x29, x30, [sp, #-16]!;                                \
+    mov     x29, sp;                                              \
+                                                                  \
+    /* Save all registers x0 to x29 */                            \
+    sub     sp, sp, #(8 * 30);                                    \
+    stp     x0, x1, [sp];                                         \
+    stp     x2, x3, [sp, #16];                                    \
+    stp     x4, x5, [sp, #32];                                    \
+    stp     x6, x7, [sp, #48];                                    \
+    stp     x8, x9, [sp, #64];                                    \
+    stp     x10, x11, [sp, #80];                                  \
+    stp     x12, x13, [sp, #96];                                  \
+    stp     x14, x15, [sp, #112];                                 \
+    stp     x16, x17, [sp, #128];                                 \
+    stp     x18, x19, [sp, #144];                                 \
+    stp     x20, x21, [sp, #160];                                 \
+    stp     x22, x23, [sp, #176];                                 \
+    stp     x24, x25, [sp, #192];                                 \
+    stp     x26, x27, [sp, #208];                                 \
+    stp     x28, x29, [sp, #224];                                 \
+                                                                  \
+    /* Allocate space for syscall_args_t on stack */              \
+    sub     sp, sp, #64;  /* sizeof(syscall_args_t) */            \
+    mov     x19, sp;      /* x19 points to syscall_args_t */      \
+                                                                  \
+    /* Store syscall_number and arguments into syscall_args_t */  \
+    mov     x0, SYS_ify(syscall_name);                            \
+    str     x0, [x19];    /* syscall_args_t.syscall_number */     \
+    ldp     x0, x1, [sp, #64];  /* Load original x0, x1 */        \
+    stp     x0, x1, [x19, #8];  /* syscall_args_t.args[0], args[1] */ \
+    ldp     x2, x3, [sp, #80];  /* Load original x2, x3 */        \
+    stp     x2, x3, [x19, #24]; /* syscall_args_t.args[2], args[3] */ \
+    ldp     x4, x5, [sp, #96];  /* Load original x4, x5 */        \
+    stp     x4, x5, [x19, #40]; /* syscall_args_t.args[4], args[5] */ \
+                                                                  \
+    /* Prepare argument (pointer to syscall_args_t) */            \
+    mov     x0, x19;                                              \
+                                                                  \
+    /* Call convert_args */                                       \
+    bl      convert_args;                                         \
+                                                                  \
+    /* Load the values from syscall_args_t back into registers */ \
+    ldr     x8, [x19];         /* Reload syscall number */        \
+    ldp     x0, x1, [x19, #8];  /* Reload syscall_args_t.args[0], args[1] */ \
+    ldp     x2, x3, [x19, #24]; /* Reload syscall_args_t.args[2], args[3] */ \
+    ldp     x4, x5, [x19, #40]; /* Reload syscall_args_t.args[4], args[5] */ \
+                                                                  \
+    /* Deallocate syscall_args_t from stack */                    \
+    add     sp, sp, #64;                                          \
+                                                                  \
+    /* Restore all registers x6 to x29 */                         \
+    ldp     x28, x29, [sp, #224];                                 \
+    ldp     x26, x27, [sp, #208];                                 \
+    ldp     x24, x25, [sp, #192];                                 \
+    ldp     x22, x23, [sp, #176];                                 \
+    ldp     x20, x21, [sp, #160];                                 \
+    ldp     x18, x19, [sp, #144];                                 \
+    ldp     x16, x17, [sp, #128];                                 \
+    ldp     x14, x15, [sp, #112];                                 \
+    ldp     x12, x13, [sp, #96];                                  \
+    ldp     x10, x11, [sp, #80];                                  \
+    ldp     x8, x9, [sp, #64];                                    \
+    ldp     x6, x7, [sp, #48];                                    \
+    add     sp, sp, #(8 * 30);                                    \
+                                                                  \
+    /* Tear down stack frame */                                   \
+    ldp     x29, x30, [sp], #16;
+
 
 #else /* not __ASSEMBLER__ */
 
@@ -166,18 +234,82 @@
 # define HAVE_GETTIMEOFDAY_VSYSCALL	"__kernel_gettimeofday"
 
 # define HAVE_CLONE3_WRAPPER		1
-
-# undef INTERNAL_SYSCALL_RAW
-# define INTERNAL_SYSCALL_RAW(name, nr, args...)		\
-  ({ long _sys_result;						\
-     {								\
-       LOAD_ARGS_##nr (args)					\
-       register long _x8 asm ("x8") = (name);			\
-       asm volatile ("svc	0	// syscall " # name     \
-		     : "=r" (_x0) : "r"(_x8) ASM_ARGS_##nr : "memory");	\
-       _sys_result = _x0;					\
-     }								\
+#undef INTERNAL_SYSCALL_RAW
+#define INTERNAL_SYSCALL_RAW(name, nr, args...)                        \
+  ({ long _sys_result;                                                 \
+     {                                                                 \
+       LOAD_ARGS_##nr (args)                                           \
+       register long _x8 asm ("x8") = (name);                          \
+       asm volatile (                                                  \
+         /* Set up stack frame */                                      \
+         "stp x29, x30, [sp, #-16]!;"                                  \
+         "mov x29, sp;"                                                \
+                                                                       \
+         /* Save registers x6 to x29 */                                \
+         "sub sp, sp, #(8 * 24);" /* Adjust stack pointer */           \
+         "stp x6, x7, [sp];"                                           \
+         "stp x8, x9, [sp, #16];"                                      \
+         "stp x10, x11, [sp, #32];"                                    \
+         "stp x12, x13, [sp, #48];"                                    \
+         "stp x14, x15, [sp, #64];"                                    \
+         "stp x16, x17, [sp, #80];"                                    \
+         "stp x18, x19, [sp, #96];"                                    \
+         "stp x20, x21, [sp, #112];"                                   \
+         "stp x22, x23, [sp, #128];"                                   \
+         "stp x24, x25, [sp, #144];"                                   \
+         "stp x26, x27, [sp, #160];"                                   \
+         "stp x28, x29, [sp, #176];"                                   \
+                                                                       \
+         /* Allocate space for syscall_args_t on stack */              \
+         "sub sp, sp, #64;"  /* sizeof(syscall_args_t) */              \
+         "mov x19, sp;"      /* x19 points to syscall_args_t */        \
+                                                                       \
+         /* Store syscall_number and arguments into syscall_args_t */  \
+         "str %[syscall_num], [x19];"  /* syscall_args_t.syscall_number */ \
+         "stp x0, x1, [x19, #8];"     /* syscall_args_t.args[0], args[1] */ \
+         "stp x2, x3, [x19, #24];"    /* syscall_args_t.args[2], args[3] */ \
+         "stp x4, x5, [x19, #40];"    /* syscall_args_t.args[4], args[5] */ \
+                                                                       \
+         /* Prepare argument (pointer to syscall_args_t) */            \
+         "mov x0, x19;"                                                \
+                                                                       \
+         /* Call convert_args */                                       \
+         "bl convert_args;"                                            \
+                                                                       \
+         /* Load the values from syscall_args_t back into registers */ \
+         "ldr x8, [x19];"         /* Reload syscall number */          \
+         "ldp x0, x1, [x19, #8];"  /* Reload syscall_args_t.args[0], args[1] */ \
+         "ldp x2, x3, [x19, #24];" /* Reload syscall_args_t.args[2], args[3] */ \
+         "ldp x4, x5, [x19, #40];" /* Reload syscall_args_t.args[4], args[5] */ \
+                                                                       \
+         /* Deallocate syscall_args_t from stack */                    \
+         "add sp, sp, #64;"                                            \
+                                                                       \
+         /* Restore registers x6 to x29 */                             \
+         "ldp x28, x29, [sp, #176];"                                   \
+         "ldp x26, x27, [sp, #160];"                                   \
+         "ldp x24, x25, [sp, #144];"                                   \
+         "ldp x22, x23, [sp, #128];"                                   \
+         "ldp x20, x21, [sp, #112];"                                   \
+         "ldp x18, x19, [sp, #96];"                                    \
+         "ldp x16, x17, [sp, #80];"                                    \
+         "ldp x14, x15, [sp, #64];"                                    \
+         "ldp x12, x13, [sp, #48];"                                    \
+         "ldp x10, x11, [sp, #32];"                                    \
+         "ldp x8, x9, [sp, #16];"                                      \
+         "ldp x6, x7, [sp];"                                           \
+         "add sp, sp, #(8 * 24);" /* Adjust stack pointer */           \
+                                                                       \
+         /* Tear down stack frame */                                   \
+         "ldp x29, x30, [sp], #16;"                                    \
+                                                                       \
+         : "=r" (_x0)                                                  \
+         : [syscall_num] "r" (_x8) ASM_ARGS_##nr                       \
+         : "memory", "cc");                                            \
+       _sys_result = _x0;                                              \
+     }                                                                 \
      _sys_result; })
+
 
 # undef INTERNAL_SYSCALL
 # define INTERNAL_SYSCALL(name, nr, args...)			\
